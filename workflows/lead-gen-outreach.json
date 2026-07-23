@@ -1,0 +1,959 @@
+{
+  "name": "Lead Gen Demo — Slawzer",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "trigger1",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "1",
+              "name": "niche",
+              "value": "roofing companies in Garland, Texas",
+              "type": "string"
+            },
+            {
+              "id": "2",
+              "name": "maxResults",
+              "value": 20,
+              "type": "number"
+            },
+            {
+              "id": "3",
+              "name": "scoreThreshold",
+              "value": 6,
+              "type": "number"
+            },
+            {
+              "id": "4",
+              "name": "agencyName",
+              "value": "Slawzer",
+              "type": "string"
+            },
+            {
+              "id": "5",
+              "name": "senderName",
+              "value": "Khaled",
+              "type": "string"
+            },
+            {
+              "id": "6",
+              "name": "cta",
+              "value": "Just reply to this email and I'll send over a quick 2-minute Loom showing exactly what I'd set up for you — no cost, no pitch.",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set1",
+      "name": "Search Params",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        224,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.apify.com/v2/acts/compass~crawler-google-places/run-sync-get-dataset-items",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ {\n  \"searchStringsArray\": [$('Search Params').item.json.niche],\n  \"maxCrawledPlacesPerSearch\": $('Search Params').item.json.maxResults,\n  \"language\": \"en\",\n  \"scrapeContacts\": true\n} }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          },
+          "timeout": 180000
+        }
+      },
+      "id": "http1",
+      "name": "Apify Google Maps",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        448,
+        208
+      ],
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 3000,
+      "credentials": {
+        "httpHeaderAuth": {
+          "name": "Apify API Token"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nlet places = [];\nfor (const item of items) {\n  if (Array.isArray(item.json)) {\n    places = places.concat(item.json);\n  } else {\n    places.push(item.json);\n  }\n}\n\nfunction firstOf(arr) {\n  return (Array.isArray(arr) && arr.length && arr[0]) ? arr[0] : null;\n}\n\n// Rejects placeholder / non-deliverable scrape artifacts that pass a bare presence check\n// (e.g. email@gmail.com, test@example.com, sentry/wix tracking addresses).\n// Generic-but-real business inboxes (info@, support@, admin@, sales@) are KEPT.\nfunction isUsableEmail(e) {\n  if (!e || e === '—') return 'no';\n  const addr = String(e).trim().toLowerCase();\n  if (!/^[^@\\s]+@[^@\\s]+\\.[a-z]{2,}$/.test(addr)) return 'no';\n  const parts = addr.split('@');\n  const local = parts[0];\n  const domain = parts[1];\n  const badLocals = ['email','e-mail','mail','test','testing','example','sample','user','username','name','yourname','youremail','your-email','your.email','none','na','abc','asdf','xxx','xxxx','firstname','lastname'];\n  if (badLocals.indexOf(local) !== -1) return 'no';\n  if (/^(no-?reply|do-?not-?reply|donotreply)/.test(local)) return 'no';\n  const badDomains = ['example.com','example.org','example.net','domain.com','yourdomain.com','test.com','email.com','mydomain.com','sentry.io','sentry-next.wixpress.com','wixpress.com'];\n  if (badDomains.indexOf(domain) !== -1) return 'no';\n  return 'yes';\n}\n\nfunction onlineEstimates(p) {\n  const info = p.additionalInfo;\n  if (!info || typeof info !== 'object') return '—';\n  for (const key of Object.keys(info)) {\n    const arr = info[key];\n    if (!Array.isArray(arr)) continue;\n    for (const entry of arr) {\n      if (entry && typeof entry === 'object' && Object.prototype.hasOwnProperty.call(entry, 'Online estimates')) {\n        const v = entry['Online estimates'];\n        return v === true ? 'yes' : v === false ? 'no' : '—';\n      }\n    }\n  }\n  return '—';\n}\n\nconst results = [];\nfor (const p of places) {\n  const email =\n    p.email ||\n    (Array.isArray(p.emails) && p.emails[0]) ||\n    (p.contactDetails && Array.isArray(p.contactDetails.emails) && p.contactDetails.emails[0]) ||\n    '—';\n\n  const socialsList = [\n    firstOf(p.linkedIns),\n    firstOf(p.instagrams),\n    firstOf(p.facebooks),\n    firstOf(p.youtubes),\n    firstOf(p.tiktoks),\n  ].filter(Boolean);\n\n  results.push({\n    json: {\n      name: p.title || p.name || '—',\n      website: p.website || '—',\n      email: email,\n      emailValid: isUsableEmail(email),\n      phone: p.phone || p.phoneUnformatted || '—',\n      address: p.address || '—',\n      city: p.city || '—',\n      category: p.categoryName || p.category || '—',\n      rating: p.totalScore ?? '—',\n      reviews: p.reviewsCount ?? '—',\n      mapsUrl: p.url || '—',\n      placeId: p.placeId || '—',\n      onlineEstimates: onlineEstimates(p),\n      description: p.description || '—',\n      socials: socialsList.length ? socialsList.join(' ; ') : '—',\n      isAdvertisement: p.isAdvertisement === true ? 'yes' : (p.isAdvertisement === false ? 'no' : '—'),\n      imagesCount: (typeof p.imagesCount === 'number') ? p.imagesCount : '—',\n      listingClaimed: p.claimThisBusiness === false ? 'yes' : (p.claimThisBusiness === true ? 'no' : '—'),\n    }\n  });\n}\nreturn results;\n"
+      },
+      "id": "code1",
+      "name": "Normalize",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        208
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "mode": "id",
+          "value": "YOUR_GOOGLE_SHEET_ID"
+        },
+        "sheetName": {
+          "mode": "name",
+          "value": "1_Raw"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "name": "={{$json.name}}",
+            "website": "={{$json.website}}",
+            "email": "={{$json.email}}",
+            "phone": "={{$json.phone}}",
+            "address": "={{$json.address}}",
+            "city": "={{$json.city}}",
+            "category": "={{$json.category}}",
+            "rating": "={{$json.rating}}",
+            "reviews": "={{$json.reviews}}",
+            "mapsUrl": "={{$json.mapsUrl}}",
+            "placeId": "={{$json.placeId}}",
+            "onlineEstimates": "={{$json.onlineEstimates}}",
+            "description": "={{$json.description}}",
+            "socials": "={{$json.socials}}",
+            "isAdvertisement": "={{$json.isAdvertisement}}",
+            "imagesCount": "={{$json.imagesCount}}",
+            "listingClaimed": "={{$json.listingClaimed}}"
+          },
+          "matchingColumns": [],
+          "schema": []
+        },
+        "options": {}
+      },
+      "id": "sheets1",
+      "name": "Append to 1_Raw",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        960,
+        0
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "model": "anthropic/claude-haiku-4.5",
+        "options": {
+          "maxTokens": 1500
+        }
+      },
+      "id": "6652b772-6660-4210-b4ef-ce445034cc02",
+      "name": "Qualify Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenRouter",
+      "typeVersion": 1,
+      "position": [
+        896,
+        800
+      ],
+      "credentials": {
+        "openRouterApi": {
+          "name": "OpenRouter account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "schemaType": "manual",
+        "inputSchema": "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"score\": { \"type\": \"integer\", \"description\": \"Sellability score from 1 to 10\" },\n    \"reason\": { \"type\": \"string\", \"description\": \"One line citing the specific signal that drives the score\" }\n  },\n  \"required\": [\"score\", \"reason\"]\n}",
+        "autoFix": true
+      },
+      "id": "9774f841-b55d-408c-8ae3-96504e1a3d65",
+      "name": "Score Schema",
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.3,
+      "position": [
+        960,
+        624
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=You are qualifying a local business as a sales lead for an agency that sells website + AI/automation upgrades. The IDEAL lead is a business that is ALREADY HEALTHY and ALREADY SPENDING money to get customers, but doing it with a fixable inefficiency. We are NOT looking for struggling businesses — a business with no money cannot buy. Money already moving is the signal: we offer a better deal than what they already pay for.\n\nBusiness data (a value of '—' means unknown/missing, NOT a real value):\n- Name: {{ $json.name }}\n- Website: {{ $json.website }}\n- Category: {{ $json.category }}\n- Rating: {{ $json.rating }}\n- Reviews: {{ $json.reviews }}\n- Running a Google Maps ad right now (isAdvertisement): {{ $json.isAdvertisement }}\n- Photos on their listing (imagesCount): {{ $json.imagesCount }}\n- Google listing claimed by owner: {{ $json.listingClaimed }}\n- Offers online estimates/booking: {{ $json.onlineEstimates }}\n- Email: {{ $json.email }}\n- Socials: {{ $json.socials }}\n\nCRITICAL — how to read the isAdvertisement field: a value of 'yes' means our scrape SAW them occupying a paid Google Maps ad slot. A value of 'no' or '—' means our scrape simply did NOT see them in an ad slot — that is UNKNOWN, and is NOT evidence that they are not advertising. Never treat 'no'/'—' as a gap or a deficiency, never subtract points for it, and NEVER mention ads in your reason unless the value is exactly 'yes'.\n\nScore from 1 to 10. Start at 3, then adjust:\n\nALREADY SPENDING / HEALTHY (they have budget — raise the score):\n- +3 if isAdvertisement is 'yes' (they are paying Google for a Maps ad slot right now — the strongest 'already buying leads' signal).\n- +2 if imagesCount is a real number and 25 or more (heavy investment in their presence — an established operation, not a one-person shop); +1 if imagesCount is between 10 and 24.\n- +2 if they have a real custom branded domain website (their own domain — NOT a Facebook/Instagram page, NOT wixsite/weebly/business.site, NOT '—').\n- +1 if rating is 4.0 or higher AND reviews is 40 or more (healthy, trusted, active).\n- +1 if they have active social profiles listed.\n\nFIXABLE INEFFICIENCY (the thing we would sell — raise the score):\n- +2 if 'Offers online estimates/booking' is 'no' or '—' (no online quote/booking path — a concrete gap we can close).\n\nBAD LEAD (cap the final score DOWN — these cannot or will not buy):\n- If reviews is a number under 15 → final score no higher than 2 (too small / not enough activity to have budget).\n- If reviews is a number 500 or more → final score no higher than 4 (likely a multi-location operation with an in-house marketing team — they do not outsource this).\n- If Email is '—' → final score no higher than 3 (we cannot reach them — an unreachable lead is not a lead).\n- If rating is a number below 3.8 → final score no higher than 2 (their problem is service quality, not lead flow).\n- If website is '—' or only a Facebook/Instagram page (no real site) → final score no higher than 3 (too small to pay).\n- If 'Google listing claimed by owner' is 'no' → subtract 2 (unclaimed / neglected listing).\n\nCap the total between 1 and 10.\n\nHARD RULES — do NOT invent data. Score ONLY on the fields above. Do NOT infer or mention: how recent the reviews are, review age, owner replies to reviews, number of locations, employee/company size, franchise or chain status, whether they run ads (the isAdvertisement field can only ever confirm a 'yes' — it can NEVER confirm that a business is not advertising), or any website feature BEYOND the online-estimates field. If a signal is not in the data, ignore it.\n\nReturn an integer 'score' (1 to 10) and a one-line 'reason' that names the specific spending/money and gap signals you used, e.g. 'Running a Maps ad, 5.0 rating on 324 reviews, 50+ photos, custom domain — clearly spending, but offers no online estimates: a quote-capture gap to sell.' Be concrete.",
+        "hasOutputParser": true,
+        "batching": {}
+      },
+      "id": "b68a6c07-ad71-410a-b5f7-765db99e38ff",
+      "name": "Qualify",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.9,
+      "position": [
+        896,
+        400
+      ],
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "f1",
+              "name": "name",
+              "value": "={{ $('Normalize').item.json.name }}",
+              "type": "string"
+            },
+            {
+              "id": "f2",
+              "name": "website",
+              "value": "={{ $('Normalize').item.json.website }}",
+              "type": "string"
+            },
+            {
+              "id": "f3",
+              "name": "email",
+              "value": "={{ $('Normalize').item.json.email }}",
+              "type": "string"
+            },
+            {
+              "id": "f21",
+              "name": "emailValid",
+              "value": "={{ $('Normalize').item.json.emailValid }}",
+              "type": "string"
+            },
+            {
+              "id": "f4",
+              "name": "phone",
+              "value": "={{ $('Normalize').item.json.phone }}",
+              "type": "string"
+            },
+            {
+              "id": "f5",
+              "name": "address",
+              "value": "={{ $('Normalize').item.json.address }}",
+              "type": "string"
+            },
+            {
+              "id": "f6",
+              "name": "city",
+              "value": "={{ $('Normalize').item.json.city }}",
+              "type": "string"
+            },
+            {
+              "id": "f7",
+              "name": "category",
+              "value": "={{ $('Normalize').item.json.category }}",
+              "type": "string"
+            },
+            {
+              "id": "f8",
+              "name": "rating",
+              "value": "={{ $('Normalize').item.json.rating }}",
+              "type": "string"
+            },
+            {
+              "id": "f9",
+              "name": "reviews",
+              "value": "={{ $('Normalize').item.json.reviews }}",
+              "type": "string"
+            },
+            {
+              "id": "f10",
+              "name": "mapsUrl",
+              "value": "={{ $('Normalize').item.json.mapsUrl }}",
+              "type": "string"
+            },
+            {
+              "id": "f11",
+              "name": "placeId",
+              "value": "={{ $('Normalize').item.json.placeId }}",
+              "type": "string"
+            },
+            {
+              "id": "f12",
+              "name": "onlineEstimates",
+              "value": "={{ $('Normalize').item.json.onlineEstimates }}",
+              "type": "string"
+            },
+            {
+              "id": "f13",
+              "name": "description",
+              "value": "={{ $('Normalize').item.json.description }}",
+              "type": "string"
+            },
+            {
+              "id": "f14",
+              "name": "socials",
+              "value": "={{ $('Normalize').item.json.socials }}",
+              "type": "string"
+            },
+            {
+              "id": "f18",
+              "name": "isAdvertisement",
+              "value": "={{ $('Normalize').item.json.isAdvertisement }}",
+              "type": "string"
+            },
+            {
+              "id": "f19",
+              "name": "imagesCount",
+              "value": "={{ $('Normalize').item.json.imagesCount }}",
+              "type": "string"
+            },
+            {
+              "id": "f20",
+              "name": "listingClaimed",
+              "value": "={{ $('Normalize').item.json.listingClaimed }}",
+              "type": "string"
+            },
+            {
+              "id": "f15",
+              "name": "score",
+              "value": "={{ $json.output?.score ?? $json.score }}",
+              "type": "number"
+            },
+            {
+              "id": "f16",
+              "name": "reason",
+              "value": "={{ $json.output?.reason ?? $json.reason }}",
+              "type": "string"
+            },
+            {
+              "id": "f17",
+              "name": "qualified",
+              "value": "={{ ($json.output?.score ?? $json.score) >= $('Search Params').first().json.scoreThreshold && $('Normalize').item.json.emailValid === 'yes' }}",
+              "type": "boolean"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "2a87cede-d184-4ec4-a9e6-c5aa2c9a6ed5",
+      "name": "Merge Score",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1344,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "mode": "id",
+          "value": "YOUR_GOOGLE_SHEET_ID"
+        },
+        "sheetName": {
+          "mode": "name",
+          "value": "2_Scored"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "name": "={{$json.name}}",
+            "website": "={{$json.website}}",
+            "email": "={{$json.email}}",
+            "emailValid": "={{$json.emailValid}}",
+            "phone": "={{$json.phone}}",
+            "address": "={{$json.address}}",
+            "city": "={{$json.city}}",
+            "category": "={{$json.category}}",
+            "rating": "={{$json.rating}}",
+            "reviews": "={{$json.reviews}}",
+            "mapsUrl": "={{$json.mapsUrl}}",
+            "placeId": "={{$json.placeId}}",
+            "onlineEstimates": "={{$json.onlineEstimates}}",
+            "description": "={{$json.description}}",
+            "socials": "={{$json.socials}}",
+            "isAdvertisement": "={{$json.isAdvertisement}}",
+            "imagesCount": "={{$json.imagesCount}}",
+            "listingClaimed": "={{$json.listingClaimed}}",
+            "score": "={{$json.score}}",
+            "reason": "={{$json.reason}}",
+            "qualified": "={{$json.qualified}}"
+          },
+          "matchingColumns": [],
+          "schema": []
+        },
+        "options": {}
+      },
+      "id": "44c38619-24de-44f2-bbe4-67dc037659bf",
+      "name": "Append to 2_Scored",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        1568,
+        304
+      ],
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 3000,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "model": "openai/gpt-5-mini",
+        "options": {
+          "maxTokens": 4000
+        }
+      },
+      "id": "232028cd-7b09-4343-9f9f-5e1790455f5e",
+      "name": "Draft Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenRouter",
+      "typeVersion": 1,
+      "position": [
+        1792,
+        752
+      ],
+      "credentials": {
+        "openRouterApi": {
+          "name": "OpenRouter account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "schemaType": "manual",
+        "inputSchema": "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"subject\": { \"type\": \"string\", \"description\": \"Short, specific email subject line\" },\n    \"body\": { \"type\": \"string\", \"description\": \"60 to 90 word casual email body, already including the sign-off\" }\n  },\n  \"required\": [\"subject\", \"body\"]\n}",
+        "autoFix": true
+      },
+      "id": "d97c66f6-2321-4bc1-a9a5-502e7ca0caac",
+      "name": "Email Schema",
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.3,
+      "position": [
+        1904,
+        512
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Write a short, casual cold email from {{ $('Search Params').first().json.agencyName }}, a web and AI/automation agency, to a local business.\n\nAbout the business (a value of '—' means UNKNOWN — treat it as unknown, never as a fact and never as something they lack):\n- Name: {{ $json.name }}\n- City: {{ $json.city }}\n- Website: {{ $json.website }}\n- Rating: {{ $json.rating }} from {{ $json.reviews }} reviews\n- Offers online estimates/booking: {{ $json.onlineEstimates }}\n- Their own listing description: {{ $json.description }}\n- Why we picked them (from our scoring step): {{ $json.reason }}\n\nWrite:\n- subject: short and specific, references them, no clickbait or hype.\n- body: 60 to 90 words, casual and human, first person. Open by referencing a SPECIFIC, TRUE detail from the data above (not generic flattery). One line on what we would set up and the payoff. No hype words, no over-promising.\n\nACCURACY GUARD — this email goes to a real stranger, so every claim must be checkable from the data above:\n- Use ONLY the facts listed above. Never invent history, founding year, family ownership, crew or company size, number of locations, awards, or how long they have been in business.\n- Never assert what the business is NOT doing or does NOT have. In particular: never say they are not running ads, have no website, have no online quotes, or are missing any channel — you were not given that information.\n- Do NOT describe features of their website. You have not seen it.\n- If 'Offers online estimates/booking' is exactly 'yes', do NOT suggest they lack online quotes — write about the follow-up layer behind those requests instead.\n- If 'Offers online estimates/booking' is 'no', you MAY reference the missing online quote path — that one is verified.\n- If the 'why we picked them' line is vague, mentions ads, or names no concrete gap, ignore it and write about what we would set up for them instead of asserting a flaw.\n\nExactly one call to action: {{ $('Search Params').first().json.cta }}\nSign off as {{ $('Search Params').first().json.senderName }} from {{ $('Search Params').first().json.agencyName }}. The body must already include this sign-off. Do not use placeholders like [Name] — use the real details above.",
+        "hasOutputParser": true,
+        "batching": {}
+      },
+      "id": "27962c80-ecf7-4558-b9f5-913963b3356c",
+      "name": "Draft Email",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.9,
+      "position": [
+        1792,
+        320
+      ],
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cond1",
+              "leftValue": "={{ $json.qualified }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "a607a12b-57a2-4b48-9ae6-67c039b5edf9",
+      "name": "Qualified?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1568,
+        496
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "c1",
+              "name": "name",
+              "value": "={{ $('Merge Score').item.json.name }}",
+              "type": "string"
+            },
+            {
+              "id": "c2",
+              "name": "website",
+              "value": "={{ $('Merge Score').item.json.website }}",
+              "type": "string"
+            },
+            {
+              "id": "c3",
+              "name": "email",
+              "value": "={{ $('Merge Score').item.json.email }}",
+              "type": "string"
+            },
+            {
+              "id": "c4",
+              "name": "phone",
+              "value": "={{ $('Merge Score').item.json.phone }}",
+              "type": "string"
+            },
+            {
+              "id": "c5",
+              "name": "city",
+              "value": "={{ $('Merge Score').item.json.city }}",
+              "type": "string"
+            },
+            {
+              "id": "c6",
+              "name": "category",
+              "value": "={{ $('Merge Score').item.json.category }}",
+              "type": "string"
+            },
+            {
+              "id": "c7",
+              "name": "rating",
+              "value": "={{ $('Merge Score').item.json.rating }}",
+              "type": "string"
+            },
+            {
+              "id": "c8",
+              "name": "reviews",
+              "value": "={{ $('Merge Score').item.json.reviews }}",
+              "type": "string"
+            },
+            {
+              "id": "c9",
+              "name": "onlineEstimates",
+              "value": "={{ $('Merge Score').item.json.onlineEstimates }}",
+              "type": "string"
+            },
+            {
+              "id": "c10",
+              "name": "score",
+              "value": "={{ $('Merge Score').item.json.score }}",
+              "type": "number"
+            },
+            {
+              "id": "c11",
+              "name": "reason",
+              "value": "={{ $('Merge Score').item.json.reason }}",
+              "type": "string"
+            },
+            {
+              "id": "c12",
+              "name": "qualified",
+              "value": "={{ $('Merge Score').item.json.qualified }}",
+              "type": "boolean"
+            },
+            {
+              "id": "c13",
+              "name": "subject",
+              "value": "={{ $json.output?.subject ?? $json.subject }}",
+              "type": "string"
+            },
+            {
+              "id": "c14",
+              "name": "body",
+              "value": "={{ $json.output?.body ?? $json.body }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "a437bdf1-4b2e-4096-9e0c-a5cdae27ebcc",
+      "name": "Compose Draft",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2240,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "n1",
+              "name": "name",
+              "value": "={{ $json.name }}",
+              "type": "string"
+            },
+            {
+              "id": "n2",
+              "name": "website",
+              "value": "={{ $json.website }}",
+              "type": "string"
+            },
+            {
+              "id": "n3",
+              "name": "email",
+              "value": "={{ $json.email }}",
+              "type": "string"
+            },
+            {
+              "id": "n4",
+              "name": "phone",
+              "value": "={{ $json.phone }}",
+              "type": "string"
+            },
+            {
+              "id": "n5",
+              "name": "city",
+              "value": "={{ $json.city }}",
+              "type": "string"
+            },
+            {
+              "id": "n6",
+              "name": "category",
+              "value": "={{ $json.category }}",
+              "type": "string"
+            },
+            {
+              "id": "n7",
+              "name": "rating",
+              "value": "={{ $json.rating }}",
+              "type": "string"
+            },
+            {
+              "id": "n8",
+              "name": "reviews",
+              "value": "={{ $json.reviews }}",
+              "type": "string"
+            },
+            {
+              "id": "n9",
+              "name": "onlineEstimates",
+              "value": "={{ $json.onlineEstimates }}",
+              "type": "string"
+            },
+            {
+              "id": "n10",
+              "name": "score",
+              "value": "={{ $json.score }}",
+              "type": "number"
+            },
+            {
+              "id": "n11",
+              "name": "reason",
+              "value": "={{ $json.reason }}",
+              "type": "string"
+            },
+            {
+              "id": "n12",
+              "name": "qualified",
+              "value": "={{ $json.qualified }}",
+              "type": "boolean"
+            },
+            {
+              "id": "n13",
+              "name": "subject",
+              "value": "",
+              "type": "string"
+            },
+            {
+              "id": "n14",
+              "name": "body",
+              "value": "={{ $json.emailValid === 'yes' ? ('Skipped — score ' + $json.score + ' below threshold ' + $('Search Params').first().json.scoreThreshold) : ($json.email === '—' ? 'Skipped — no email address found' : 'Skipped — email found but not usable (' + $json.email + ')') }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "33ed9ee7-a747-4e81-ab53-2e92d063ba2a",
+      "name": "No Draft",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2240,
+        672
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "mode": "id",
+          "value": "YOUR_GOOGLE_SHEET_ID"
+        },
+        "sheetName": {
+          "mode": "name",
+          "value": "3_Final"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "name": "={{$json.name}}",
+            "website": "={{$json.website}}",
+            "email": "={{$json.email}}",
+            "phone": "={{$json.phone}}",
+            "city": "={{$json.city}}",
+            "category": "={{$json.category}}",
+            "rating": "={{$json.rating}}",
+            "reviews": "={{$json.reviews}}",
+            "onlineEstimates": "={{$json.onlineEstimates}}",
+            "score": "={{$json.score}}",
+            "reason": "={{$json.reason}}",
+            "qualified": "={{$json.qualified}}",
+            "subject": "={{$json.subject}}",
+            "body": "={{$json.body}}"
+          },
+          "matchingColumns": [],
+          "schema": []
+        },
+        "options": {}
+      },
+      "id": "98c7078c-2a75-4b25-85d5-46e83b0fc08c",
+      "name": "Append to 3_Final",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        2464,
+        496
+      ],
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 3000,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "name": "Google Sheets account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Search Params",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Search Params": {
+      "main": [
+        [
+          {
+            "node": "Apify Google Maps",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apify Google Maps": {
+      "main": [
+        [
+          {
+            "node": "Normalize",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize": {
+      "main": [
+        [
+          {
+            "node": "Append to 1_Raw",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Qualify",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Qualify Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Qualify",
+            "type": "ai_languageModel",
+            "index": 0
+          },
+          {
+            "node": "Score Schema",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Score Schema": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "Qualify",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Qualify": {
+      "main": [
+        [
+          {
+            "node": "Merge Score",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Score": {
+      "main": [
+        [
+          {
+            "node": "Append to 2_Scored",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Qualified?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Qualified?": {
+      "main": [
+        [
+          {
+            "node": "Draft Email",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "No Draft",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Draft Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Draft Email",
+            "type": "ai_languageModel",
+            "index": 0
+          },
+          {
+            "node": "Email Schema",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Email Schema": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "Draft Email",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Draft Email": {
+      "main": [
+        [
+          {
+            "node": "Compose Draft",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compose Draft": {
+      "main": [
+        [
+          {
+            "node": "Append to 3_Final",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "No Draft": {
+      "main": [
+        [
+          {
+            "node": "Append to 3_Final",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "saveManualExecutions": true,
+    "saveExecutionProgress": true,
+    "binaryMode": "separate"
+  },
+  "pinData": {}
+}
